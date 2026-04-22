@@ -22,19 +22,17 @@
         .btn-confirm { background: var(--verde); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
         .btn-retake { background: var(--laranja); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
         .status-gps { font-size: 12px; color: #666; text-align: center; }
-        .status-sys { font-size: 10px; color: #888; text-align: center; margin-top: 5px; }
     </style>
 </head>
 <body>
 
 <header>CONSERVA - INVENTÁRIO</header>
 
-<div class="container" id="main-ui">
+<div class="container">
     <div class="card">
-        <label>ID da Próxima Pilha:</label>
-        <div id="display-id" style="font-size: 24px; font-weight: bold; color: var(--verde);">Pilha_001</div>
+        <label>Pilha Atual:</label>
+        <div id="display-id" style="font-size: 24px; font-weight: bold; color: var(--verde);">Carregando...</div>
     </div>
-
     <div class="card">
         <label>Profundidade (Metros):</label>
         <select id="profundidade">
@@ -42,193 +40,93 @@
             <option value="2.0">2.0 Metros</option>
         </select>
     </div>
-
     <div class="status-gps" id="gps-status">Aguardando GPS...</div>
-
-    <button class="btn-capture" onclick="document.getElementById('input-camera').click()">TIRAR FOTO DA PILHA</button>
-    <input type="file" id="input-camera" accept="image/*" capture="camera" style="display: none;" onchange="handlePhoto(this)">
-
-    <button class="btn-export" onclick="exportarLote()">EXPORTAR LOTE (.ZIP)</button>
-    <div class="status-sys" id="sys-status">Inicializando sistema offline...</div>
+    <button class="btn-capture" onclick="document.getElementById('camera').click()">CAPTURAR FOTO</button>
+    <input type="file" id="camera" accept="image/*" capture="camera" style="display: none;" onchange="processPhoto(this)">
+    <button class="btn-export" onclick="exportZip()">BAIXAR LOTE (.ZIP)</button>
 </div>
 
 <div id="preview-container">
-    <img id="preview-img" src="">
+    <img id="preview-img">
     <div class="preview-btns">
-        <button class="btn-retake" onclick="descartarFoto()">REFAZER FOTO</button>
-        <button class="btn-confirm" onclick="confirmarFoto()">CONFIRMAR E SALVAR</button>
+        <button class="btn-retake" onclick="resetPreview()">REFAZER</button>
+        <button class="btn-confirm" onclick="saveData()">SALVAR PILHA</button>
     </div>
 </div>
 
 <script>
-    // =========================================================================
-    // 1. MOTOR DE OFFLINE E PERSISTÊNCIA (BLINDAGEM DO CACHE)
-    // =========================================================================
+    let db, currentPhoto = null, lastCoords = {lat:0, lon:0};
     
-    // Registra o Service Worker (Porteiro Offline)
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js')
-        .then(() => {
-            document.getElementById('sys-status').innerText = "Sistema Offline: ATIVO";
-        })
-        .catch(err => {
-            document.getElementById('sys-status').innerText = "Erro no modo Offline";
-        });
-    }
+    // Offline Service Worker
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 
-    // Solicita proteção contra limpeza automática de cache do Android/iOS
-    if (navigator.storage && navigator.storage.persist) {
-        navigator.storage.persist().then(granted => {
-            if (granted) {
-                console.log("Persistência garantida: Dados blindados.");
-            } else {
-                console.log("Persistência negada: O SO pode limpar os dados se faltar espaço.");
-            }
-        });
-    }
+    // Database
+    const req = indexedDB.open("ConservaDB", 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore("coletas", {keyPath: "id"});
+    req.onsuccess = e => { db = e.target.result; updateID(); };
 
-    // =========================================================================
-    // 2. VARIÁVEIS GLOBAIS E BANCO DE DADOS
-    // =========================================================================
-    let db;
-    let currentID = 1;
-    let lastCoords = { lat: 0, lon: 0 };
-    let currentPhotoBlob = null;
+    // GPS
+    navigator.geolocation.watchPosition(p => {
+        lastCoords = {lat: p.coords.latitude, lon: p.coords.longitude};
+        document.getElementById('gps-status').innerText = `Sinal GPS Ativo`;
+    }, null, {enableHighAccuracy: true});
 
-    // Inicializa Banco de Dados Interno (IndexedDB)
-    const request = indexedDB.open("ConservaDB", 1);
-    request.onupgradeneeded = e => {
-        db = e.target.result;
-        db.createObjectStore("coletas", { keyPath: "id" });
-    };
-    request.onsuccess = e => { 
-        db = e.target.result; 
-        atualizarContador();
-    };
-
-    // =========================================================================
-    // 3. CAPTURA DE GPS (PRE-WARMING)
-    // =========================================================================
-    navigator.geolocation.watchPosition(
-        pos => {
-            lastCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-            document.getElementById('gps-status').innerText = `GPS OK: ${lastCoords.lat.toFixed(5)}, ${lastCoords.lon.toFixed(5)}`;
-            document.getElementById('gps-status').style.color = "var(--verde)";
-        },
-        err => { 
-            document.getElementById('gps-status').innerText = "Buscando satélite... (Mantenha o GPS ligado)"; 
-            document.getElementById('gps-status').style.color = "var(--laranja)";
-        },
-        { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
-    );
-
-    // =========================================================================
-    // 4. LÓGICA DE CAPTURA E AUDITORIA DA FOTO
-    // =========================================================================
-    function handlePhoto(input) {
+    function processPhoto(input) {
         if (input.files && input.files[0]) {
-            currentPhotoBlob = input.files[0];
-            const reader = new FileReader();
-            reader.onload = e => {
-                // Mostra a foto em tela cheia para o operador aprovar
-                document.getElementById('preview-img').src = e.target.result;
-                document.getElementById('preview-container').style.display = 'flex';
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const MAX = 1280;
+                let w = img.width, h = img.height;
+                if (w > MAX) { h *= MAX/w; w = MAX; }
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                canvas.toBlob(blob => {
+                    currentPhoto = blob;
+                    document.getElementById('preview-img').src = URL.createObjectURL(blob);
+                    document.getElementById('preview-container').style.display = 'flex';
+                }, 'image/jpeg', 0.7);
             };
-            reader.readAsDataURL(currentPhotoBlob);
+            img.src = URL.createObjectURL(input.files[0]);
         }
-        // Limpa o input para garantir que o evento 'onchange' dispare na próxima vez
-        input.value = ''; 
     }
 
-    function descartarFoto() {
-        // Esconde a tela de aprovação e joga a foto fora
-        document.getElementById('preview-container').style.display = 'none';
-        currentPhotoBlob = null;
-    }
+    function resetPreview() { document.getElementById('preview-container').style.display = 'none'; currentPhoto = null; }
 
-    function confirmarFoto() {
-        // Pega os dados exatos do momento do clique
-        const idStr = `Pilha_${String(currentID).padStart(3, '0')}`;
-        const profundidade = document.getElementById('profundidade').value;
-        const agora = new Date();
-        
-        const registro = {
-            id: idStr,
-            lat: lastCoords.lat,
-            lon: lastCoords.lon,
-            data: agora.toLocaleDateString('pt-BR'),
-            hora: agora.toLocaleTimeString('pt-BR'),
-            profundidade: profundidade,
-            foto: currentPhotoBlob // A foto inteira salva no banco invisível
+    function saveData() {
+        const id = `Pilha_${Date.now()}`;
+        const data = {
+            id: id,
+            Lat: lastCoords.lat,
+            Lon: lastCoords.lon,
+            Data: new Date().toLocaleDateString(),
+            Hora: new Date().toLocaleTimeString(),
+            Profundidade: document.getElementById('profundidade').value,
+            foto: currentPhoto
         };
-
-        // Salva no IndexedDB
         const tx = db.transaction("coletas", "readwrite");
-        tx.objectStore("coletas").add(registro);
-        
-        tx.oncomplete = () => {
-            currentID++;
-            atualizarContador();
-            descartarFoto(); // Fecha a tela preta
-            alert(`Sincronizado: ${idStr} salva com sucesso no cofre offline!`);
-        };
-
-        tx.onerror = () => {
-            alert("Erro ao salvar! Verifique se há espaço no celular.");
-        }
+        tx.objectStore("coletas").add(data);
+        tx.oncomplete = () => { resetPreview(); updateID(); alert("Salvo!"); };
     }
 
-    // Conta quantas pilhas já existem no banco para gerar o próximo ID
-    function atualizarContador() {
-        const tx = db.transaction("coletas", "readonly");
-        const store = tx.objectStore("coletas");
-        const countRequest = store.getAllKeys();
-        
-        countRequest.onsuccess = () => {
-            currentID = countRequest.result.length + 1;
-            document.getElementById('display-id').innerText = `Pilha_${String(currentID).padStart(3, '0')}`;
+    function updateID() {
+        db.transaction("coletas").objectStore("coletas").getAllKeys().onsuccess = e => {
+            document.getElementById('display-id').innerText = `Total: ${e.target.result.length} pilhas`;
         };
     }
 
-    // =========================================================================
-    // 5. EXPORTAÇÃO DO LOTE (.ZIP) PARA O PC
-    // =========================================================================
-    async function exportarLote() {
+    async function exportZip() {
         const zip = new JSZip();
-        const tx = db.transaction("coletas", "readonly");
-        
-        // Puxa tudo do banco
-        const coletas = await new Promise(resolve => {
-            tx.objectStore("coletas").getAll().onsuccess = e => resolve(e.target.result);
-        });
-
-        if (coletas.length === 0) {
-            alert("O lote está vazio. Nenhuma coleta foi feita ainda.");
-            return;
-        }
-
-        // Monta o cabeçalho do CSV
+        const items = await new Promise(res => db.transaction("coletas").objectStore("coletas").getAll().onsuccess = e => res(e.target.result));
         let csv = "ID_Foto,Lat,Lon,Data,Hora,Profundidade\n";
-        
-        // Coloca cada linha no CSV e cada foto renomeada dentro do ZIP
-        coletas.forEach(c => {
-            const fileName = `${c.id}.jpg`;
-            csv += `${fileName},${c.lat},${c.lon},${c.data},${c.hora},${c.profundidade}\n`;
-            zip.file(fileName, c.foto);
+        items.forEach(i => {
+            const name = `${i.id}.jpg`;
+            csv += `${name},${i.Lat},${i.Lon},${i.Data},${i.Hora},${i.Profundidade}\n`;
+            zip.file(name, i.foto);
         });
-
         zip.file("dados_campo.csv", csv);
-        
-        // Gera o arquivo final e força o download
-        document.getElementById('sys-status').innerText = "Empacotando arquivo ZIP...";
-        const content = await zip.generateAsync({ type: "blob" });
-        
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(content);
-        link.download = "Lote_Conserva.zip";
-        link.click();
-        
-        document.getElementById('sys-status').innerText = "Lote exportado com sucesso!";
+        const blob = await zip.generateAsync({type:"blob"});
+        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "Lote_Conserva.zip"; a.click();
     }
 </script>
 </body>
