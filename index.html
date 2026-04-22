@@ -19,9 +19,10 @@
         #preview-container { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; z-index: 100; flex-direction: column; }
         #preview-img { width: 100%; flex: 1; object-fit: contain; }
         .preview-btns { display: flex; gap: 10px; padding: 20px; background: #000; }
-        .btn-confirm { background: var(--verde); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; }
-        .btn-retake { background: var(--laranja); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; }
+        .btn-confirm { background: var(--verde); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
+        .btn-retake { background: var(--laranja); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
         .status-gps { font-size: 12px; color: #666; text-align: center; }
+        .status-sys { font-size: 10px; color: #888; text-align: center; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -48,118 +49,10 @@
     <input type="file" id="input-camera" accept="image/*" capture="camera" style="display: none;" onchange="handlePhoto(this)">
 
     <button class="btn-export" onclick="exportarLote()">EXPORTAR LOTE (.ZIP)</button>
+    <div class="status-sys" id="sys-status">Inicializando sistema offline...</div>
 </div>
 
 <div id="preview-container">
     <img id="preview-img" src="">
     <div class="preview-btns">
-        <button class="btn-retake" onclick="descartarFoto()">REFAZER</button>
-        <button class="btn-confirm" onclick="confirmarFoto()">CONFIRMAR E SALVAR</button>
-    </div>
-</div>
-
-<script>
-    let db;
-    let currentID = 1;
-    let lastCoords = { lat: 0, lon: 0 };
-    let currentPhotoBlob = null;
-
-    // Inicializa Banco de Dados Local
-    const request = indexedDB.open("ConservaDB", 1);
-    request.onupgradeneeded = e => {
-        db = e.target.result;
-        db.createObjectStore("coletas", { keyPath: "id" });
-    };
-    request.onsuccess = e => { 
-        db = e.target.result; 
-        atualizarContador();
-    };
-
-    // GPS "Sempre Ativo" (Pre-warming)
-    navigator.geolocation.watchPosition(
-        pos => {
-            lastCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-            document.getElementById('gps-status').innerText = `GPS OK: ${lastCoords.lat.toFixed(5)}, ${lastCoords.lon.toFixed(5)}`;
-        },
-        err => { document.getElementById('gps-status').innerText = "Erro ao obter GPS"; },
-        { enableHighAccuracy: true }
-    );
-
-    function handlePhoto(input) {
-        if (input.files && input.files[0]) {
-            currentPhotoBlob = input.files[0];
-            const reader = new FileReader();
-            reader.onload = e => {
-                document.getElementById('preview-img').src = e.target.result;
-                document.getElementById('preview-container').style.display = 'flex';
-            };
-            reader.readAsDataURL(currentPhotoBlob);
-        }
-    }
-
-    function descartarFoto() {
-        document.getElementById('preview-container').style.display = 'none';
-        currentPhotoBlob = null;
-    }
-
-    function confirmarFoto() {
-        const idStr = `Pilha_${String(currentID).padStart(3, '0')}`;
-        const profundidade = document.getElementById('profundidade').value;
-        const agora = new Date();
-        
-        const registro = {
-            id: idStr,
-            lat: lastCoords.lat,
-            lon: lastCoords.lon,
-            data: agora.toLocaleDateString('pt-BR'),
-            hora: agora.toLocaleTimeString('pt-BR'),
-            profundidade: profundidade,
-            foto: currentPhotoBlob
-        };
-
-        const tx = db.transaction("coletas", "readwrite");
-        tx.objectStore("coletas").add(registro);
-        tx.oncomplete = () => {
-            currentID++;
-            atualizarContador();
-            descartarFoto();
-            alert(`${idStr} salva com sucesso!`);
-        };
-    }
-
-    function atualizarContador() {
-        const tx = db.transaction("coletas", "readonly");
-        const store = tx.objectStore("coletas");
-        const countRequest = store.getAllKeys();
-        countRequest.onsuccess = () => {
-            currentID = countRequest.result.length + 1;
-            document.getElementById('display-id').innerText = `Pilha_${String(currentID).padStart(3, '0')}`;
-        };
-    }
-
-    async function exportarLote() {
-        const zip = new JSZip();
-        const tx = db.transaction("coletas", "readonly");
-        const coletas = await new Promise(resolve => {
-            tx.objectStore("coletas").getAll().onsuccess = e => resolve(e.target.result);
-        });
-
-        if (coletas.length === 0) return alert("Nenhuma coleta para exportar.");
-
-        let csv = "ID_Foto,Lat,Lon,Data,Hora,Profundidade\n";
-        coletas.forEach(c => {
-            const fileName = `${c.id}.jpg`;
-            csv += `${fileName},${c.lat},${c.lon},${c.data},${c.hora},${c.profundidade}\n`;
-            zip.file(fileName, c.foto);
-        });
-
-        zip.file("dados_campo.csv", csv);
-        const content = await zip.generateAsync({ type: "blob" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(content);
-        link.download = "Lote_Conserva.zip";
-        link.click();
-    }
-</script>
-</body>
-</html>
+        <button class="btn-ret
