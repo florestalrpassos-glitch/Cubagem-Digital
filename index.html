@@ -17,10 +17,11 @@
         
         .row { display: flex; gap: 8px; margin-top: 8px; }
         .btn-add { background: var(--verde); color: white; border: none; font-weight: bold; flex: 1; }
-        .btn-del { background: var(--vermelho); color: white; border: none; font-size: 12px; padding: 8px; margin-top: 8px; border-radius: 5px; }
+        .btn-del { background: #eee; color: #666; border: none; font-size: 11px; padding: 6px; margin-top: 8px; border-radius: 5px; }
         
         .btn-capture { background: var(--verde); color: white; border: none; font-weight: bold; margin-top: 15px; padding: 18px; font-size: 18px; }
         .btn-export { background: #333; color: white; border: none; margin-top: 20px; padding: 15px; }
+        .btn-reset { background: white; color: var(--vermelho); border: 1px solid var(--vermelho); margin-top: 30px; padding: 10px; font-size: 12px; font-weight: bold; }
         
         #preview-container { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; z-index: 100; flex-direction: column; }
         #preview-img { width: 100%; flex: 1; object-fit: contain; }
@@ -36,22 +37,22 @@
 
 <div class="container">
     <div class="card">
-        <label>Selecione a Linha de Distribuição (LD):</label>
+        <label>Selecione a LD:</label>
         <select id="select-projeto" onchange="salvarSelecao()">
             </select>
-        <button class="btn-del" onclick="removerProjeto()">Deletar este projeto da lista</button>
+        <button class="btn-del" onclick="removerProjeto()">Remover nome da lista</button>
         
-        <div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
-            <label>Cadastrar Novo Projeto/Trecho:</label>
+        <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">
+            <label>Nova LD (Trecho):</label>
             <div class="row">
                 <input type="text" id="novo-projeto" placeholder="Nome da nova LD...">
-                <button class="btn-add" style="max-width: 100px;" onclick="adicionarProjeto()">ADD</button>
+                <button class="btn-add" style="max-width: 80px;" onclick="adicionarProjeto()">ADD</button>
             </div>
         </div>
     </div>
 
-    <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
-        <label style="margin:0;">Nº SEQUENCIAL DA PILHA:</label>
+    <div class="card" style="display: flex; justify-content: space-between; align-items: center; border-left: 5px solid var(--verde);">
+        <label style="margin:0;">PRÓXIMA PILHA:</label>
         <span id="display-id" style="font-size: 32px; font-weight: bold; color: var(--verde);">--</span>
     </div>
 
@@ -64,12 +65,14 @@
         </select>
     </div>
 
-    <div class="status-gps" id="gps-status">GPS: Sincronizando satélites...</div>
+    <div class="status-gps" id="gps-status">GPS: Buscando sinal...</div>
 
-    <button class="btn-capture" onclick="document.getElementById('camera').click()">CAPTURAR FOTO</button>
+    <button class="btn-capture" onclick="document.getElementById('camera').click()">TIRAR FOTO DA PILHA</button>
     <input type="file" id="camera" accept="image/*" capture="camera" style="display: none;" onchange="processPhoto(this)">
 
     <button class="btn-export" onclick="exportZip()">BAIXAR LOTE ZIP</button>
+
+    <button class="btn-reset" onclick="resetSistema()">ZERAR NUMERAÇÃO (LIMPAR BANCO)</button>
 </div>
 
 <div id="preview-container">
@@ -82,8 +85,6 @@
 
 <script>
     let db, currentPhoto = null, lastCoords = {lat:0, lon:0}, nextID = 1;
-    
-    // Lista inicial fornecida pelo Engenheiro
     const projetosIniciais = [
         "LD 138 kV Brumado II - Livramento de Brumado",
         "LD 138 kV Pratudão I - Fazenda Sinimbu",
@@ -93,20 +94,15 @@
 
     let listaProjetos = JSON.parse(localStorage.getItem('projetos_conserva')) || projetosIniciais;
 
-    window.onload = () => {
-        carregarLista();
-        initDB();
-    };
+    window.onload = () => { carregarLista(); initDB(); };
 
-    // --- LÓGICA DE PROJETOS ---
     function carregarLista() {
         const select = document.getElementById('select-projeto');
         const ultimo = localStorage.getItem('ultimo_selecionado');
         select.innerHTML = "";
         listaProjetos.forEach(p => {
             let opt = document.createElement('option');
-            opt.value = p;
-            opt.innerText = p;
+            opt.value = p; opt.innerText = p;
             if(p === ultimo) opt.selected = true;
             select.appendChild(opt);
         });
@@ -119,36 +115,47 @@
             listaProjetos.push(nome);
             localStorage.setItem('projetos_conserva', JSON.stringify(listaProjetos));
             localStorage.setItem('ultimo_selecionado', nome);
-            input.value = "";
-            carregarLista();
-            alert("Novo projeto confirmado e adicionado à lista!");
+            input.value = ""; carregarLista();
         }
     }
 
     function removerProjeto() {
         const select = document.getElementById('select-projeto');
-        const nome = select.value;
-        if(confirm(`Remover "${nome}" da lista? Isso não apaga as fotos já tiradas.`)) {
-            listaProjetos = listaProjetos.filter(p => p !== nome);
+        if(confirm(`Remover "${select.value}" da lista?`)) {
+            listaProjetos = listaProjetos.filter(p => p !== select.value);
             localStorage.setItem('projetos_conserva', JSON.stringify(listaProjetos));
             carregarLista();
         }
     }
 
-    function salvarSelecao() {
-        localStorage.setItem('ultimo_selecionado', document.getElementById('select-projeto').value);
-    }
+    function salvarSelecao() { localStorage.setItem('ultimo_selecionado', document.getElementById('select-projeto').value); }
 
-    // --- LÓGICA DE DADOS (DB) ---
     function initDB() {
         const req = indexedDB.open("ConservaDB", 1);
         req.onupgradeneeded = e => e.target.result.createObjectStore("coletas", {keyPath: "id"});
         req.onsuccess = e => { db = e.target.result; updatePilhaID(); };
     }
 
+    // --- FUNÇÃO DE RESET SEGURO ---
+    function resetSistema() {
+        const check1 = confirm("⚠️ ATENÇÃO: Isso apagará todas as fotos e reiniciará a numeração em 1.\nDeseja continuar?");
+        if (check1) {
+            const check2 = confirm("🛑 ÚLTIMO AVISO: Você já baixou o arquivo .ZIP deste lote?\nSe não baixou, os dados serão perdidos para sempre.");
+            if (check2) {
+                const tx = db.transaction("coletas", "readwrite");
+                const store = tx.objectStore("coletas");
+                const clearReq = store.clear();
+                clearReq.onsuccess = () => {
+                    updatePilhaID();
+                    alert("Sistema zerado! ID reiniciado em 1.");
+                };
+            }
+        }
+    }
+
     navigator.geolocation.watchPosition(p => {
         lastCoords = {lat: p.coords.latitude, lon: p.coords.longitude};
-        document.getElementById('gps-status').innerText = `Sinal GPS: OK (${lastCoords.lat.toFixed(4)})`;
+        document.getElementById('gps-status').innerText = `GPS Ativo: OK`;
         document.getElementById('gps-status').style.color = "var(--verde)";
     }, null, {enableHighAccuracy: true});
 
@@ -157,7 +164,7 @@
             const img = new Image();
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                const MAX = 1280; // Otimização de memória campo
+                const MAX = 1280;
                 let w = img.width, h = img.height;
                 if (w > MAX) { h *= MAX/w; w = MAX; }
                 canvas.width = w; canvas.height = h;
@@ -178,20 +185,13 @@
         const registro = {
             id: nextID,
             Projeto: document.getElementById('select-projeto').value,
-            Lat: lastCoords.lat,
-            Lon: lastCoords.lon,
-            Data: new Date().toLocaleDateString('pt-BR'),
-            Hora: new Date().toLocaleTimeString('pt-BR'),
-            Profundidade: document.getElementById('profundidade').value,
-            foto: currentPhoto
+            Lat: lastCoords.lat, Lon: lastCoords.lon,
+            Data: new Date().toLocaleDateString('pt-BR'), Hora: new Date().toLocaleTimeString('pt-BR'),
+            Profundidade: document.getElementById('profundidade').value, foto: currentPhoto
         };
         const tx = db.transaction("coletas", "readwrite");
         tx.objectStore("coletas").add(registro);
-        tx.oncomplete = () => { 
-            resetPreview(); 
-            updatePilhaID(); 
-            alert(`Pilha Nº ${registro.id} salva com sucesso!`); 
-        };
+        tx.oncomplete = () => { resetPreview(); updatePilhaID(); };
     }
 
     function updatePilhaID() {
@@ -208,18 +208,15 @@
         const zip = new JSZip();
         const projetoAtual = document.getElementById('select-projeto').value;
         const tx = db.transaction("coletas", "readonly");
-        
         tx.objectStore("coletas").getAll().onsuccess = async e => {
             const items = e.target.result;
-            if (items.length === 0) return alert("Nenhuma coleta encontrada no banco.");
-
+            if (items.length === 0) return alert("Nenhuma coleta no banco.");
             let csv = "ID_Pilha,Projeto,Lat,Lon,Data,Hora,Profundidade\n";
             items.forEach(i => {
                 const fileName = `Pilha_${i.id}.jpg`;
                 csv += `${i.id},"${i.Projeto}",${i.Lat},${i.Lon},${i.Data},${i.Hora},${i.Profundidade}\n`;
                 zip.file(fileName, i.foto);
             });
-
             zip.file("dados_campo.csv", csv);
             const blob = await zip.generateAsync({type:"blob"});
             const a = document.createElement("a");
