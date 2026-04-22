@@ -7,68 +7,149 @@
     <link rel="manifest" href="manifest.json">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
-        :root { --verde: #2E7D32; --laranja: #EF6C00; --fundo: #F5F5F5; }
+        :root { --verde: #2E7D32; --laranja: #EF6C00; --fundo: #F5F5F5; --vermelho: #C62828; }
         body { font-family: sans-serif; background: var(--fundo); margin: 0; display: flex; flex-direction: column; height: 100vh; }
         header { background: var(--verde); color: white; padding: 15px; text-align: center; font-weight: bold; }
-        .container { padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 15px; }
+        .container { padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
         .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        label { display: block; margin-bottom: 8px; font-weight: bold; color: #333; }
-        select, button { width: 100%; padding: 15px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
-        .btn-capture { background: var(--verde); color: white; border: none; font-weight: bold; margin-top: 20px; }
-        .btn-export { background: #333; color: white; border: none; margin-top: auto; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: #333; font-size: 14px; }
+        select, button, input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
+        
+        .row { display: flex; gap: 8px; margin-top: 8px; }
+        .btn-add { background: var(--verde); color: white; border: none; font-weight: bold; flex: 1; }
+        .btn-del { background: var(--vermelho); color: white; border: none; font-size: 12px; padding: 8px; margin-top: 8px; border-radius: 5px; }
+        
+        .btn-capture { background: var(--verde); color: white; border: none; font-weight: bold; margin-top: 15px; padding: 18px; font-size: 18px; }
+        .btn-export { background: #333; color: white; border: none; margin-top: 20px; padding: 15px; }
+        
         #preview-container { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; z-index: 100; flex-direction: column; }
         #preview-img { width: 100%; flex: 1; object-fit: contain; }
         .preview-btns { display: flex; gap: 10px; padding: 20px; background: #000; }
         .btn-confirm { background: var(--verde); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
         .btn-retake { background: var(--laranja); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
-        .status-gps { font-size: 12px; color: #666; text-align: center; }
+        .status-gps { font-size: 12px; color: #666; text-align: center; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-<header>CONSERVA - INVENTÁRIO</header>
+<header>CONSERVA - GESTÃO DE LDs</header>
 
 <div class="container">
     <div class="card">
-        <label>Pilha Atual:</label>
-        <div id="display-id" style="font-size: 24px; font-weight: bold; color: var(--verde);">Carregando...</div>
+        <label>Selecione a Linha de Distribuição (LD):</label>
+        <select id="select-projeto" onchange="salvarSelecao()">
+            </select>
+        <button class="btn-del" onclick="removerProjeto()">Deletar este projeto da lista</button>
+        
+        <div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+            <label>Cadastrar Novo Projeto/Trecho:</label>
+            <div class="row">
+                <input type="text" id="novo-projeto" placeholder="Nome da nova LD...">
+                <button class="btn-add" style="max-width: 100px;" onclick="adicionarProjeto()">ADD</button>
+            </div>
+        </div>
     </div>
+
+    <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+        <label style="margin:0;">Nº SEQUENCIAL DA PILHA:</label>
+        <span id="display-id" style="font-size: 32px; font-weight: bold; color: var(--verde);">--</span>
+    </div>
+
     <div class="card">
         <label>Profundidade (Metros):</label>
         <select id="profundidade">
             <option value="1.0">1.0 Metro</option>
             <option value="2.0">2.0 Metros</option>
+            <option value="3.0">3.0 Metros</option>
         </select>
     </div>
-    <div class="status-gps" id="gps-status">Aguardando GPS...</div>
+
+    <div class="status-gps" id="gps-status">GPS: Sincronizando satélites...</div>
+
     <button class="btn-capture" onclick="document.getElementById('camera').click()">CAPTURAR FOTO</button>
     <input type="file" id="camera" accept="image/*" capture="camera" style="display: none;" onchange="processPhoto(this)">
-    <button class="btn-export" onclick="exportZip()">BAIXAR LOTE (.ZIP)</button>
+
+    <button class="btn-export" onclick="exportZip()">BAIXAR LOTE ZIP</button>
 </div>
 
 <div id="preview-container">
     <img id="preview-img">
     <div class="preview-btns">
         <button class="btn-retake" onclick="resetPreview()">REFAZER</button>
-        <button class="btn-confirm" onclick="saveData()">SALVAR PILHA</button>
+        <button class="btn-confirm" onclick="saveData()">CONFIRMAR E SALVAR</button>
     </div>
 </div>
 
 <script>
-    let db, currentPhoto = null, lastCoords = {lat:0, lon:0};
+    let db, currentPhoto = null, lastCoords = {lat:0, lon:0}, nextID = 1;
     
-    // Offline Service Worker
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+    // Lista inicial fornecida pelo Engenheiro
+    const projetosIniciais = [
+        "LD 138 kV Brumado II - Livramento de Brumado",
+        "LD 138 kV Pratudão I - Fazenda Sinimbu",
+        "LD 138 kV Paratinga - Boquira",
+        "LD 138 kV Ipiaú - Jequié II"
+    ];
 
-    // Database
-    const req = indexedDB.open("ConservaDB", 1);
-    req.onupgradeneeded = e => e.target.result.createObjectStore("coletas", {keyPath: "id"});
-    req.onsuccess = e => { db = e.target.result; updateID(); };
+    let listaProjetos = JSON.parse(localStorage.getItem('projetos_conserva')) || projetosIniciais;
 
-    // GPS
+    window.onload = () => {
+        carregarLista();
+        initDB();
+    };
+
+    // --- LÓGICA DE PROJETOS ---
+    function carregarLista() {
+        const select = document.getElementById('select-projeto');
+        const ultimo = localStorage.getItem('ultimo_selecionado');
+        select.innerHTML = "";
+        listaProjetos.forEach(p => {
+            let opt = document.createElement('option');
+            opt.value = p;
+            opt.innerText = p;
+            if(p === ultimo) opt.selected = true;
+            select.appendChild(opt);
+        });
+    }
+
+    function adicionarProjeto() {
+        const input = document.getElementById('novo-projeto');
+        const nome = input.value.trim();
+        if(nome && !listaProjetos.includes(nome)) {
+            listaProjetos.push(nome);
+            localStorage.setItem('projetos_conserva', JSON.stringify(listaProjetos));
+            localStorage.setItem('ultimo_selecionado', nome);
+            input.value = "";
+            carregarLista();
+            alert("Novo projeto confirmado e adicionado à lista!");
+        }
+    }
+
+    function removerProjeto() {
+        const select = document.getElementById('select-projeto');
+        const nome = select.value;
+        if(confirm(`Remover "${nome}" da lista? Isso não apaga as fotos já tiradas.`)) {
+            listaProjetos = listaProjetos.filter(p => p !== nome);
+            localStorage.setItem('projetos_conserva', JSON.stringify(listaProjetos));
+            carregarLista();
+        }
+    }
+
+    function salvarSelecao() {
+        localStorage.setItem('ultimo_selecionado', document.getElementById('select-projeto').value);
+    }
+
+    // --- LÓGICA DE DADOS (DB) ---
+    function initDB() {
+        const req = indexedDB.open("ConservaDB", 1);
+        req.onupgradeneeded = e => e.target.result.createObjectStore("coletas", {keyPath: "id"});
+        req.onsuccess = e => { db = e.target.result; updatePilhaID(); };
+    }
+
     navigator.geolocation.watchPosition(p => {
         lastCoords = {lat: p.coords.latitude, lon: p.coords.longitude};
-        document.getElementById('gps-status').innerText = `Sinal GPS Ativo`;
+        document.getElementById('gps-status').innerText = `Sinal GPS: OK (${lastCoords.lat.toFixed(4)})`;
+        document.getElementById('gps-status').style.color = "var(--verde)";
     }, null, {enableHighAccuracy: true});
 
     function processPhoto(input) {
@@ -76,7 +157,7 @@
             const img = new Image();
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                const MAX = 1280;
+                const MAX = 1280; // Otimização de memória campo
                 let w = img.width, h = img.height;
                 if (w > MAX) { h *= MAX/w; w = MAX; }
                 canvas.width = w; canvas.height = h;
@@ -94,39 +175,58 @@
     function resetPreview() { document.getElementById('preview-container').style.display = 'none'; currentPhoto = null; }
 
     function saveData() {
-        const id = `Pilha_${Date.now()}`;
-        const data = {
-            id: id,
+        const registro = {
+            id: nextID,
+            Projeto: document.getElementById('select-projeto').value,
             Lat: lastCoords.lat,
             Lon: lastCoords.lon,
-            Data: new Date().toLocaleDateString(),
-            Hora: new Date().toLocaleTimeString(),
+            Data: new Date().toLocaleDateString('pt-BR'),
+            Hora: new Date().toLocaleTimeString('pt-BR'),
             Profundidade: document.getElementById('profundidade').value,
             foto: currentPhoto
         };
         const tx = db.transaction("coletas", "readwrite");
-        tx.objectStore("coletas").add(data);
-        tx.oncomplete = () => { resetPreview(); updateID(); alert("Salvo!"); };
+        tx.objectStore("coletas").add(registro);
+        tx.oncomplete = () => { 
+            resetPreview(); 
+            updatePilhaID(); 
+            alert(`Pilha Nº ${registro.id} salva com sucesso!`); 
+        };
     }
 
-    function updateID() {
-        db.transaction("coletas").objectStore("coletas").getAllKeys().onsuccess = e => {
-            document.getElementById('display-id').innerText = `Total: ${e.target.result.length} pilhas`;
+    function updatePilhaID() {
+        const tx = db.transaction("coletas", "readonly");
+        tx.objectStore("coletas").getAll().onsuccess = e => {
+            const coletas = e.target.result;
+            const maxID = coletas.reduce((max, c) => Math.max(max, c.id), 0);
+            nextID = maxID + 1;
+            document.getElementById('display-id').innerText = nextID;
         };
     }
 
     async function exportZip() {
         const zip = new JSZip();
-        const items = await new Promise(res => db.transaction("coletas").objectStore("coletas").getAll().onsuccess = e => res(e.target.result));
-        let csv = "ID_Foto,Lat,Lon,Data,Hora,Profundidade\n";
-        items.forEach(i => {
-            const name = `${i.id}.jpg`;
-            csv += `${name},${i.Lat},${i.Lon},${i.Data},${i.Hora},${i.Profundidade}\n`;
-            zip.file(name, i.foto);
-        });
-        zip.file("dados_campo.csv", csv);
-        const blob = await zip.generateAsync({type:"blob"});
-        const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "Lote_Conserva.zip"; a.click();
+        const projetoAtual = document.getElementById('select-projeto').value;
+        const tx = db.transaction("coletas", "readonly");
+        
+        tx.objectStore("coletas").getAll().onsuccess = async e => {
+            const items = e.target.result;
+            if (items.length === 0) return alert("Nenhuma coleta encontrada no banco.");
+
+            let csv = "ID_Pilha,Projeto,Lat,Lon,Data,Hora,Profundidade\n";
+            items.forEach(i => {
+                const fileName = `Pilha_${i.id}.jpg`;
+                csv += `${i.id},"${i.Projeto}",${i.Lat},${i.Lon},${i.Data},${i.Hora},${i.Profundidade}\n`;
+                zip.file(fileName, i.foto);
+            });
+
+            zip.file("dados_campo.csv", csv);
+            const blob = await zip.generateAsync({type:"blob"});
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = `Lote_${projetoAtual.replace(/[^a-z0-9]/gi, '_')}.zip`;
+            a.click();
+        };
     }
 </script>
 </body>
