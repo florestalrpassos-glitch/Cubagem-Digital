@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Conserva - Cubagem Digital</title>
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root { --verde: #2E7D32; --laranja: #EF6C00; --fundo: #F5F5F5; }
+        body { font-family: sans-serif; background: var(--fundo); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        header { background: var(--verde); color: white; padding: 15px; text-align: center; font-weight: bold; }
+        .container { padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 15px; }
+        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: #333; }
+        select, button { width: 100%; padding: 15px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; }
+        .btn-capture { background: var(--verde); color: white; border: none; font-weight: bold; margin-top: 20px; }
+        .btn-export { background: #333; color: white; border: none; margin-top: auto; }
+        #preview-container { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; z-index: 100; flex-direction: column; }
+        #preview-img { width: 100%; flex: 1; object-fit: contain; }
+        .preview-btns { display: flex; gap: 10px; padding: 20px; background: #000; }
+        .btn-confirm { background: var(--verde); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; }
+        .btn-retake { background: var(--laranja); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; }
+        .status-gps { font-size: 12px; color: #666; text-align: center; }
+    </style>
+</head>
+<body>
+
+<header>CONSERVA - INVENTÁRIO</header>
+
+<div class="container" id="main-ui">
+    <div class="card">
+        <label>ID da Próxima Pilha:</label>
+        <div id="display-id" style="font-size: 24px; font-weight: bold; color: var(--verde);">Pilha_001</div>
+    </div>
+
+    <div class="card">
+        <label>Profundidade (Metros):</label>
+        <select id="profundidade">
+            <option value="1.0">1.0 Metro</option>
+            <option value="2.0">2.0 Metros</option>
+        </select>
+    </div>
+
+    <div class="status-gps" id="gps-status">Aguardando GPS...</div>
+
+    <button class="btn-capture" onclick="document.getElementById('input-camera').click()">TIRAR FOTO DA PILHA</button>
+    <input type="file" id="input-camera" accept="image/*" capture="camera" style="display: none;" onchange="handlePhoto(this)">
+
+    <button class="btn-export" onclick="exportarLote()">EXPORTAR LOTE (.ZIP)</button>
+</div>
+
+<div id="preview-container">
+    <img id="preview-img" src="">
+    <div class="preview-btns">
+        <button class="btn-retake" onclick="descartarFoto()">REFAZER</button>
+        <button class="btn-confirm" onclick="confirmarFoto()">CONFIRMAR E SALVAR</button>
+    </div>
+</div>
+
+<script>
+    let db;
+    let currentID = 1;
+    let lastCoords = { lat: 0, lon: 0 };
+    let currentPhotoBlob = null;
+
+    // Inicializa Banco de Dados Local
+    const request = indexedDB.open("ConservaDB", 1);
+    request.onupgradeneeded = e => {
+        db = e.target.result;
+        db.createObjectStore("coletas", { keyPath: "id" });
+    };
+    request.onsuccess = e => { 
+        db = e.target.result; 
+        atualizarContador();
+    };
+
+    // GPS "Sempre Ativo" (Pre-warming)
+    navigator.geolocation.watchPosition(
+        pos => {
+            lastCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+            document.getElementById('gps-status').innerText = `GPS OK: ${lastCoords.lat.toFixed(5)}, ${lastCoords.lon.toFixed(5)}`;
+        },
+        err => { document.getElementById('gps-status').innerText = "Erro ao obter GPS"; },
+        { enableHighAccuracy: true }
+    );
+
+    function handlePhoto(input) {
+        if (input.files && input.files[0]) {
+            currentPhotoBlob = input.files[0];
+            const reader = new FileReader();
+            reader.onload = e => {
+                document.getElementById('preview-img').src = e.target.result;
+                document.getElementById('preview-container').style.display = 'flex';
+            };
+            reader.readAsDataURL(currentPhotoBlob);
+        }
+    }
+
+    function descartarFoto() {
+        document.getElementById('preview-container').style.display = 'none';
+        currentPhotoBlob = null;
+    }
+
+    function confirmarFoto() {
+        const idStr = `Pilha_${String(currentID).padStart(3, '0')}`;
+        const profundidade = document.getElementById('profundidade').value;
+        const agora = new Date();
+        
+        const registro = {
+            id: idStr,
+            lat: lastCoords.lat,
+            lon: lastCoords.lon,
+            data: agora.toLocaleDateString('pt-BR'),
+            hora: agora.toLocaleTimeString('pt-BR'),
+            profundidade: profundidade,
+            foto: currentPhotoBlob
+        };
+
+        const tx = db.transaction("coletas", "readwrite");
+        tx.objectStore("coletas").add(registro);
+        tx.oncomplete = () => {
+            currentID++;
+            atualizarContador();
+            descartarFoto();
+            alert(`${idStr} salva com sucesso!`);
+        };
+    }
+
+    function atualizarContador() {
+        const tx = db.transaction("coletas", "readonly");
+        const store = tx.objectStore("coletas");
+        const countRequest = store.getAllKeys();
+        countRequest.onsuccess = () => {
+            currentID = countRequest.result.length + 1;
+            document.getElementById('display-id').innerText = `Pilha_${String(currentID).padStart(3, '0')}`;
+        };
+    }
+
+    async function exportarLote() {
+        const zip = new JSZip();
+        const tx = db.transaction("coletas", "readonly");
+        const coletas = await new Promise(resolve => {
+            tx.objectStore("coletas").getAll().onsuccess = e => resolve(e.target.result);
+        });
+
+        if (coletas.length === 0) return alert("Nenhuma coleta para exportar.");
+
+        let csv = "ID_Foto,Lat,Lon,Data,Hora,Profundidade\n";
+        coletas.forEach(c => {
+            const fileName = `${c.id}.jpg`;
+            csv += `${fileName},${c.lat},${c.lon},${c.data},${c.hora},${c.profundidade}\n`;
+            zip.file(fileName, c.foto);
+        });
+
+        zip.file("dados_campo.csv", csv);
+        const content = await zip.generateAsync({ type: "blob" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(content);
+        link.download = "Lote_Conserva.zip";
+        link.click();
+    }
+</script>
+</body>
+</html>
