@@ -55,4 +55,181 @@
 <div id="preview-container">
     <img id="preview-img" src="">
     <div class="preview-btns">
-        <button class="btn-ret
+        <button class="btn-retake" onclick="descartarFoto()">REFAZER FOTO</button>
+        <button class="btn-confirm" onclick="confirmarFoto()">CONFIRMAR E SALVAR</button>
+    </div>
+</div>
+
+<script>
+    // =========================================================================
+    // 1. MOTOR DE OFFLINE E PERSISTÊNCIA (BLINDAGEM DO CACHE)
+    // =========================================================================
+    
+    // Registra o Service Worker (Porteiro Offline)
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js')
+        .then(() => {
+            document.getElementById('sys-status').innerText = "Sistema Offline: ATIVO";
+        })
+        .catch(err => {
+            document.getElementById('sys-status').innerText = "Erro no modo Offline";
+        });
+    }
+
+    // Solicita proteção contra limpeza automática de cache do Android/iOS
+    if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().then(granted => {
+            if (granted) {
+                console.log("Persistência garantida: Dados blindados.");
+            } else {
+                console.log("Persistência negada: O SO pode limpar os dados se faltar espaço.");
+            }
+        });
+    }
+
+    // =========================================================================
+    // 2. VARIÁVEIS GLOBAIS E BANCO DE DADOS
+    // =========================================================================
+    let db;
+    let currentID = 1;
+    let lastCoords = { lat: 0, lon: 0 };
+    let currentPhotoBlob = null;
+
+    // Inicializa Banco de Dados Interno (IndexedDB)
+    const request = indexedDB.open("ConservaDB", 1);
+    request.onupgradeneeded = e => {
+        db = e.target.result;
+        db.createObjectStore("coletas", { keyPath: "id" });
+    };
+    request.onsuccess = e => { 
+        db = e.target.result; 
+        atualizarContador();
+    };
+
+    // =========================================================================
+    // 3. CAPTURA DE GPS (PRE-WARMING)
+    // =========================================================================
+    navigator.geolocation.watchPosition(
+        pos => {
+            lastCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+            document.getElementById('gps-status').innerText = `GPS OK: ${lastCoords.lat.toFixed(5)}, ${lastCoords.lon.toFixed(5)}`;
+            document.getElementById('gps-status').style.color = "var(--verde)";
+        },
+        err => { 
+            document.getElementById('gps-status').innerText = "Buscando satélite... (Mantenha o GPS ligado)"; 
+            document.getElementById('gps-status').style.color = "var(--laranja)";
+        },
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+    );
+
+    // =========================================================================
+    // 4. LÓGICA DE CAPTURA E AUDITORIA DA FOTO
+    // =========================================================================
+    function handlePhoto(input) {
+        if (input.files && input.files[0]) {
+            currentPhotoBlob = input.files[0];
+            const reader = new FileReader();
+            reader.onload = e => {
+                // Mostra a foto em tela cheia para o operador aprovar
+                document.getElementById('preview-img').src = e.target.result;
+                document.getElementById('preview-container').style.display = 'flex';
+            };
+            reader.readAsDataURL(currentPhotoBlob);
+        }
+        // Limpa o input para garantir que o evento 'onchange' dispare na próxima vez
+        input.value = ''; 
+    }
+
+    function descartarFoto() {
+        // Esconde a tela de aprovação e joga a foto fora
+        document.getElementById('preview-container').style.display = 'none';
+        currentPhotoBlob = null;
+    }
+
+    function confirmarFoto() {
+        // Pega os dados exatos do momento do clique
+        const idStr = `Pilha_${String(currentID).padStart(3, '0')}`;
+        const profundidade = document.getElementById('profundidade').value;
+        const agora = new Date();
+        
+        const registro = {
+            id: idStr,
+            lat: lastCoords.lat,
+            lon: lastCoords.lon,
+            data: agora.toLocaleDateString('pt-BR'),
+            hora: agora.toLocaleTimeString('pt-BR'),
+            profundidade: profundidade,
+            foto: currentPhotoBlob // A foto inteira salva no banco invisível
+        };
+
+        // Salva no IndexedDB
+        const tx = db.transaction("coletas", "readwrite");
+        tx.objectStore("coletas").add(registro);
+        
+        tx.oncomplete = () => {
+            currentID++;
+            atualizarContador();
+            descartarFoto(); // Fecha a tela preta
+            alert(`Sincronizado: ${idStr} salva com sucesso no cofre offline!`);
+        };
+
+        tx.onerror = () => {
+            alert("Erro ao salvar! Verifique se há espaço no celular.");
+        }
+    }
+
+    // Conta quantas pilhas já existem no banco para gerar o próximo ID
+    function atualizarContador() {
+        const tx = db.transaction("coletas", "readonly");
+        const store = tx.objectStore("coletas");
+        const countRequest = store.getAllKeys();
+        
+        countRequest.onsuccess = () => {
+            currentID = countRequest.result.length + 1;
+            document.getElementById('display-id').innerText = `Pilha_${String(currentID).padStart(3, '0')}`;
+        };
+    }
+
+    // =========================================================================
+    // 5. EXPORTAÇÃO DO LOTE (.ZIP) PARA O PC
+    // =========================================================================
+    async function exportarLote() {
+        const zip = new JSZip();
+        const tx = db.transaction("coletas", "readonly");
+        
+        // Puxa tudo do banco
+        const coletas = await new Promise(resolve => {
+            tx.objectStore("coletas").getAll().onsuccess = e => resolve(e.target.result);
+        });
+
+        if (coletas.length === 0) {
+            alert("O lote está vazio. Nenhuma coleta foi feita ainda.");
+            return;
+        }
+
+        // Monta o cabeçalho do CSV
+        let csv = "ID_Foto,Lat,Lon,Data,Hora,Profundidade\n";
+        
+        // Coloca cada linha no CSV e cada foto renomeada dentro do ZIP
+        coletas.forEach(c => {
+            const fileName = `${c.id}.jpg`;
+            csv += `${fileName},${c.lat},${c.lon},${c.data},${c.hora},${c.profundidade}\n`;
+            zip.file(fileName, c.foto);
+        });
+
+        zip.file("dados_campo.csv", csv);
+        
+        // Gera o arquivo final e força o download
+        document.getElementById('sys-status').innerText = "Empacotando arquivo ZIP...";
+        const content = await zip.generateAsync({ type: "blob" });
+        
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(content);
+        link.download = "Lote_Conserva.zip";
+        link.click();
+        
+        document.getElementById('sys-status').innerText = "Lote exportado com sucesso!";
+    }
+</script>
+</body>
+</html>
