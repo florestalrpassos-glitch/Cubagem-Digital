@@ -7,14 +7,16 @@
     <link rel="manifest" href="manifest.json">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
-        :root { --verde: #2E7D32; --laranja: #EF6C00; --fundo: #F5F5F5; --vermelho: #C62828; }
+        :root { --verde: #2E7D32; --laranja: #EF6C00; --fundo: #F5F5F5; --vermelho: #C62828; --azul: #1565C0; }
         body { font-family: sans-serif; background: var(--fundo); margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        header { background: var(--verde); color: white; padding: 15px; text-align: center; font-weight: bold; }
+        header { background: var(--verde); color: white; padding: 12px 15px; text-align: center; font-weight: bold; }
         .container { padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
         .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         label { display: block; margin-bottom: 8px; font-weight: bold; color: #333; font-size: 14px; }
         select, button, input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
         .row { display: flex; gap: 8px; margin-top: 8px; }
+        .row-half { display: flex; gap: 10px; }
+        .row-half > div { flex: 1; }
         .btn-add { background: var(--verde); color: white; border: none; font-weight: bold; flex: 1; }
         .btn-del { background: #eee; color: #666; border: none; font-size: 11px; padding: 6px; margin-top: 8px; }
         .btn-capture { background: var(--verde); color: white; border: none; font-weight: bold; margin-top: 15px; padding: 18px; font-size: 18px; }
@@ -27,11 +29,26 @@
         .btn-confirm { background: var(--verde); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
         .btn-retake { background: var(--laranja); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
         .status-gps { font-size: 12px; color: #666; text-align: center; margin-top: 10px; }
+
+        /* Calibração */
+        #card-calibracao { border-left: 5px solid var(--azul); }
+        #card-calibracao.ativa { border-left-color: var(--laranja); background: #FFF8E1; }
+        #card-calibracao.concluida { border-left-color: var(--verde); background: #E8F5E9; }
+        .btn-calib-iniciar { background: var(--azul); color: white; border: none; padding: 12px; font-weight: bold; font-size: 15px; }
+        .btn-calib-cancelar { background: white; color: var(--vermelho); border: 2px solid var(--vermelho); padding: 10px; font-size: 13px; font-weight: bold; margin-top: 8px; }
+        .calib-progresso { font-size: 22px; font-weight: bold; color: var(--laranja); text-align: center; margin: 6px 0; }
+        .calib-label { font-size: 13px; color: #666; text-align: center; }
+        #card-trena { display: none; border-left: 5px solid var(--laranja); }
+        #card-trena.visivel { display: block; }
+        .label-trena { color: var(--laranja) !important; }
+        input.campo-obrigatorio { border: 2px solid var(--laranja); }
     </style>
 </head>
 <body>
 <header>TABOCAS - GESTÃO DE LDs</header>
 <div class="container">
+
+    <!-- Projeto -->
     <div class="card">
         <label>Linha de Distribuição (LD):</label>
         <select id="select-projeto" onchange="salvarSelecao()"></select>
@@ -41,10 +58,14 @@
             <button class="btn-add" style="max-width: 60px;" onclick="adicionarProjeto()">ADD</button>
         </div>
     </div>
+
+    <!-- ID da pilha -->
     <div class="card" style="display: flex; justify-content: space-between; align-items: center; border-left: 5px solid var(--verde);">
         <label style="margin:0;">PRÓXIMA PILHA:</label>
         <span id="display-id" style="font-size: 32px; font-weight: bold; color: var(--verde);">--</span>
     </div>
+
+    <!-- Comprimento da lenha -->
     <div class="card">
         <label>Comprimento da Lenha (Metros):</label>
         <select id="select-profundidade" onchange="toggleManualProfundidade()">
@@ -58,12 +79,60 @@
             <input type="number" id="manual-prof-input" step="0.01" placeholder="Ex: 1.15">
         </div>
     </div>
+
+    <!-- Painel de calibração -->
+    <div class="card" id="card-calibracao">
+        <!-- Estado: inativo -->
+        <div id="calib-inativo">
+            <label style="color: var(--azul); margin-bottom: 4px;">🔬 Calibração de Fator</label>
+            <p style="font-size:12px; color:#666; margin: 4px 0 10px;">
+                Coleta pareada: foto + trena para calibrar o fator YOLO+ArUco.
+            </p>
+            <button class="btn-calib-iniciar" onclick="iniciarCalibracao()">INICIAR CALIBRAÇÃO</button>
+        </div>
+        <!-- Estado: ativo -->
+        <div id="calib-ativo" style="display:none;">
+            <label style="color: var(--laranja); margin-bottom:4px;">🔬 CALIBRAÇÃO EM ANDAMENTO</label>
+            <div class="calib-progresso" id="calib-progresso-texto">0 / 20</div>
+            <div class="calib-label">coletas realizadas</div>
+            <div style="background:#eee; border-radius:8px; height:12px; margin:10px 0; overflow:hidden;">
+                <div id="calib-barra" style="height:100%; background:var(--laranja); width:0%; border-radius:8px; transition:width 0.3s;"></div>
+            </div>
+            <button class="btn-calib-cancelar" onclick="cancelarCalibracao()">Cancelar Calibração</button>
+        </div>
+        <!-- Estado: concluído -->
+        <div id="calib-concluido" style="display:none;">
+            <label style="color: var(--verde); margin-bottom:4px;">✅ Calibração Concluída!</label>
+            <p style="font-size:13px; color:#388E3C; margin:4px 0 10px;">
+                Exporte o ZIP e envie ao SGA para processar.
+            </p>
+            <button class="btn-calib-iniciar" style="background:var(--verde);" onclick="novaCalibracao()">NOVA CALIBRAÇÃO</button>
+        </div>
+    </div>
+
+    <!-- Medidas da trena — visível só em modo calibração ativo -->
+    <div class="card" id="card-trena">
+        <label class="label-trena">📏 Medidas da Trena <span style="font-size:11px; font-weight:normal;">(obrigatório)</span></label>
+        <div class="row-half">
+            <div>
+                <label style="font-size:13px; color:#555;">Largura (m):</label>
+                <input type="number" id="input-largura" class="campo-obrigatorio" step="0.01" min="0.01" placeholder="Ex: 3.20">
+            </div>
+            <div>
+                <label style="font-size:13px; color:#555;">Altura (m):</label>
+                <input type="number" id="input-altura" class="campo-obrigatorio" step="0.01" min="0.01" placeholder="Ex: 1.80">
+            </div>
+        </div>
+    </div>
+
     <div class="status-gps" id="gps-status">GPS: Sincronizando...</div>
-    <button class="btn-capture" onclick="document.getElementById('camera').click()">CAPTURAR FOTO</button>
+    <button class="btn-capture" onclick="solicitarFoto()">CAPTURAR FOTO</button>
     <input type="file" id="camera" accept="image/*" capture="camera" style="display: none;" onchange="processPhoto(this)">
     <button class="btn-export" onclick="exportZip()">BAIXAR LOTE ZIP</button>
     <button class="btn-reset" onclick="resetSistema()">ZERAR SISTEMA (NOVO PROJETO)</button>
 </div>
+
+<!-- Preview da foto -->
 <div id="preview-container">
     <img id="preview-img">
     <div class="preview-btns">
@@ -71,8 +140,13 @@
         <button class="btn-confirm" onclick="saveData()">CONFIRMAR E SALVAR</button>
     </div>
 </div>
+
 <script>
+    // ── Estado global ──────────────────────────────────────────────────────────
     let db, currentPhoto = null, lastCoords = {lat:0, lon:0}, nextID = 1;
+
+    const CALIB_ALVO_PADRAO = 50;
+
     const projetosIniciais = [
         "LD 138 kV Brumado II - Livramento de Brumado",
         "LD 138 kV Pratudão I - Fazenda Sinimbu",
@@ -80,8 +154,10 @@
         "LD 138 kV Ipiaú - Jequié II"
     ];
     let listaProjetos = JSON.parse(localStorage.getItem('projetos_tabocas')) || projetosIniciais;
-    window.onload = () => { carregarLista(); initDB(); };
 
+    window.onload = () => { carregarLista(); initDB(); atualizarUiCalibracao(); };
+
+    // ── Projetos ───────────────────────────────────────────────────────────────
     function carregarLista() {
         const select = document.getElementById('select-projeto');
         const ultimo = localStorage.getItem('ultimo_selecionado');
@@ -116,6 +192,8 @@
         const div = document.getElementById('manual-input-div');
         div.style.display = (document.getElementById('select-profundidade').value === 'manual') ? 'block' : 'none';
     }
+
+    // ── IndexedDB ──────────────────────────────────────────────────────────────
     function initDB() {
         const req = indexedDB.open("TabocasDB", 1);
         req.onupgradeneeded = e => e.target.result.createObjectStore("coletas", {keyPath: "id"});
@@ -127,13 +205,79 @@
             tx.objectStore("coletas").clear().onsuccess = () => { updatePilhaID(); alert("Zerrado!"); };
         }
     }
+
+    // ── Calibração ─────────────────────────────────────────────────────────────
+    function calibEstado()    { return localStorage.getItem('calib_estado') || 'inativo'; }     // inativo|ativo|concluido
+    function calibContagem()  { return parseInt(localStorage.getItem('calib_contagem') || '0'); }
+    function calibAlvo()      { return parseInt(localStorage.getItem('calib_alvo') || CALIB_ALVO_PADRAO); }
+
+    function iniciarCalibracao() {
+        if (!confirm("Iniciar modo calibração?\n\nVocê precisará medir cada pilha com a trena antes de tirar a foto.\n\nConfirma?")) return;
+        const alvo = parseInt(prompt(`Quantas coletas para esta calibração?\n(Recomendado: ${CALIB_ALVO_PADRAO} — mínimo estatístico para ±5% de precisão)`, CALIB_ALVO_PADRAO));
+        if (isNaN(alvo) || alvo < 5) return alert("Mínimo de 5 coletas.");
+        localStorage.setItem('calib_estado',   'ativo');
+        localStorage.setItem('calib_alvo',     alvo);
+        localStorage.setItem('calib_contagem', '0');
+        atualizarUiCalibracao();
+    }
+
+    function cancelarCalibracao() {
+        if (!confirm("Cancelar calibração? O progresso atual será perdido.")) return;
+        localStorage.setItem('calib_estado', 'inativo');
+        localStorage.removeItem('calib_contagem');
+        localStorage.removeItem('calib_alvo');
+        atualizarUiCalibracao();
+    }
+
+    function novaCalibracao() {
+        localStorage.setItem('calib_estado', 'inativo');
+        localStorage.removeItem('calib_contagem');
+        localStorage.removeItem('calib_alvo');
+        atualizarUiCalibracao();
+    }
+
+    function incrementarCalibracao() {
+        const nova = calibContagem() + 1;
+        localStorage.setItem('calib_contagem', nova);
+        if (nova >= calibAlvo()) {
+            localStorage.setItem('calib_estado', 'concluido');
+        }
+        atualizarUiCalibracao();
+    }
+
+    function atualizarUiCalibracao() {
+        const estado  = calibEstado();
+        const alvo    = calibAlvo();
+        const conta   = calibContagem();
+
+        // Painel calibração
+        document.getElementById('calib-inativo').style.display  = estado === 'inativo'   ? 'block' : 'none';
+        document.getElementById('calib-ativo').style.display    = estado === 'ativo'     ? 'block' : 'none';
+        document.getElementById('calib-concluido').style.display = estado === 'concluido' ? 'block' : 'none';
+
+        const card = document.getElementById('card-calibracao');
+        card.classList.toggle('ativa',    estado === 'ativo');
+        card.classList.toggle('concluida', estado === 'concluido');
+
+        // Progresso
+        if (estado === 'ativo') {
+            document.getElementById('calib-progresso-texto').innerText = `${conta} / ${alvo}`;
+            document.getElementById('calib-barra').style.width = `${Math.min(100, (conta / alvo) * 100)}%`;
+        }
+
+        // Campos trena: visíveis só se calibração ativa
+        const cardTrena = document.getElementById('card-trena');
+        cardTrena.classList.toggle('visivel', estado === 'ativo');
+    }
+
+    // ── GPS ────────────────────────────────────────────────────────────────────
     navigator.geolocation.watchPosition(p => {
         lastCoords = {lat: p.coords.latitude, lon: p.coords.longitude};
         document.getElementById('gps-status').innerText = `GPS: SINAL OK`;
         document.getElementById('gps-status').style.color = "var(--verde)";
     }, null, {enableHighAccuracy: true});
 
-    // ── EXIF orientation ───────────────────────────────────────────────────────
+    // ── EXIF orientation fix ───────────────────────────────────────────────────
     function _getExifOrientation(file, callback) {
         const reader = new FileReader();
         reader.onload = function(e) {
@@ -161,6 +305,20 @@
             return callback(-1);
         };
         reader.readAsArrayBuffer(file.slice(0, 65536));
+    }
+
+    // ── Foto ───────────────────────────────────────────────────────────────────
+    function solicitarFoto() {
+        // Em modo calibração, valida campos trena ANTES de abrir a câmera
+        if (calibEstado() === 'ativo') {
+            const largura = parseFloat(document.getElementById('input-largura').value.replace(',', '.'));
+            const altura  = parseFloat(document.getElementById('input-altura').value.replace(',', '.'));
+            if (!largura || largura <= 0 || !altura || altura <= 0) {
+                alert("⚠️ Em modo calibração, preencha Largura e Altura antes de tirar a foto.");
+                return;
+            }
+        }
+        document.getElementById('camera').click();
     }
 
     function processPhoto(input) {
@@ -206,27 +364,65 @@
     function resetPreview() {
         document.getElementById('preview-container').style.display = 'none';
         currentPhoto = null;
+        // Reseta o input de arquivo para permitir re-captura do mesmo arquivo
+        document.getElementById('camera').value = '';
     }
+
+    // ── Salvar ─────────────────────────────────────────────────────────────────
     function saveData() {
+        if (!currentPhoto) {
+            alert("Nenhuma foto capturada.");
+            return;
+        }
+
+        // Profundidade
         const select = document.getElementById('select-profundidade');
-        let valorProfundidade = select.value;
-        if (valorProfundidade === 'manual') {
-            valorProfundidade = document.getElementById('manual-prof-input').value.replace(',', '.');
-            if (!valorProfundidade || valorProfundidade <= 0) {
-                alert("Por favor, digite um valor válido para a profundidade.");
+        let valorProf = select.value;
+        if (valorProf === 'manual') {
+            valorProf = document.getElementById('manual-prof-input').value.replace(',', '.');
+            if (!valorProf || parseFloat(valorProf) <= 0) {
+                alert("Por favor, digite um valor válido para o comprimento.");
                 return;
             }
         }
+
+        // Medidas da trena — só em modo calibração (já validadas antes da foto)
+        let largura = 0, altura = 0;
+        if (calibEstado() === 'ativo') {
+            largura = parseFloat(document.getElementById('input-largura').value.replace(',', '.')) || 0;
+            altura  = parseFloat(document.getElementById('input-altura').value.replace(',', '.'))  || 0;
+            if (largura <= 0 || altura <= 0) {
+                alert("⚠️ Preencha Largura e Altura para salvar em modo calibração.");
+                return;
+            }
+        }
+
         const registro = {
-            id: nextID,
-            Projeto: document.getElementById('select-projeto').value,
-            Lat: lastCoords.lat, Lon: lastCoords.lon,
-            Data: new Date().toLocaleDateString('pt-BR'), Hora: new Date().toLocaleTimeString('pt-BR'),
-            Profundidade: valorProfundidade, foto: currentPhoto
+            id:           nextID,
+            Projeto:      document.getElementById('select-projeto').value,
+            Lat:          lastCoords.lat,
+            Lon:          lastCoords.lon,
+            Data:         new Date().toLocaleDateString('pt-BR'),
+            Hora:         new Date().toLocaleTimeString('pt-BR'),
+            Profundidade: valorProf,
+            Largura_m:    largura,
+            Altura_m:     altura,
+            foto:         currentPhoto,
         };
+
         const tx = db.transaction("coletas", "readwrite");
-        tx.objectStore("coletas").add(registro).onsuccess = () => { resetPreview(); updatePilhaID(); };
+        tx.objectStore("coletas").add(registro).onsuccess = () => {
+            // Atualiza contagem de calibração
+            if (calibEstado() === 'ativo') {
+                incrementarCalibracao();
+                document.getElementById('input-largura').value = '';
+                document.getElementById('input-altura').value  = '';
+            }
+            resetPreview();
+            updatePilhaID();
+        };
     }
+
     function updatePilhaID() {
         db.transaction("coletas", "readonly").objectStore("coletas").getAll().onsuccess = e => {
             const maxID = e.target.result.reduce((max, c) => Math.max(max, c.id), 0);
@@ -234,14 +430,16 @@
             document.getElementById('display-id').innerText = nextID;
         };
     }
+
+    // ── Export ZIP ─────────────────────────────────────────────────────────────
     async function exportZip() {
         const zip = new JSZip();
         db.transaction("coletas", "readonly").objectStore("coletas").getAll().onsuccess = async e => {
             const items = e.target.result;
             if (items.length === 0) return alert("Banco vazio.");
-            let csv = "ID_Pilha,Projeto,Lat,Lon,Data,Hora,Profundidade\n";
+            let csv = "ID_Pilha,Projeto,Lat,Lon,Data,Hora,Profundidade,Largura_m,Altura_m\n";
             items.forEach(i => {
-                csv += `${i.id},"${i.Projeto}",${i.Lat},${i.Lon},${i.Data},${i.Hora},${i.Profundidade}\n`;
+                csv += `${i.id},"${i.Projeto}",${i.Lat},${i.Lon},${i.Data},${i.Hora},${i.Profundidade},${i.Largura_m || 0},${i.Altura_m || 0}\n`;
                 zip.file(`Pilha_${i.id}.jpg`, i.foto);
             });
             zip.file("dados_campo.csv", csv);
