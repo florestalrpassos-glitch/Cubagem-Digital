@@ -1,238 +1,71 @@
-<!DOCTYPE html>
-<html lang="pt-br">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Conserva - Cubagem Digital</title>
-    <link rel="manifest" href="manifest.json">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <style>
-        :root { --verde: #2E7D32; --laranja: #EF6C00; --fundo: #F5F5F5; --vermelho: #C62828; }
-        body { font-family: sans-serif; background: var(--fundo); margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        header { background: var(--verde); color: white; padding: 15px; text-align: center; font-weight: bold; }
-        .container { padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
-        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        label { display: block; margin-bottom: 8px; font-weight: bold; color: #333; font-size: 14px; }
-        select, button, input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
-        
-        .row { display: flex; gap: 8px; margin-top: 8px; }
-        .btn-add { background: var(--verde); color: white; border: none; font-weight: bold; flex: 1; }
-        .btn-del { background: #eee; color: #666; border: none; font-size: 11px; padding: 6px; margin-top: 8px; }
-        
-        .btn-capture { background: var(--verde); color: white; border: none; font-weight: bold; margin-top: 15px; padding: 18px; font-size: 18px; }
-        .btn-export { background: #333; color: white; border: none; margin-top: 20px; padding: 15px; }
-        .btn-reset { background: white; color: var(--vermelho); border: 1px solid var(--vermelho); margin-top: 30px; padding: 10px; font-size: 12px; font-weight: bold; }
-        
-        #manual-input-div { display: none; margin-top: 10px; border-top: 1px dashed #ccc; padding-top: 10px; }
-        #preview-container { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; z-index: 100; flex-direction: column; }
-        #preview-img { width: 100%; flex: 1; object-fit: contain; }
-        .preview-btns { display: flex; gap: 10px; padding: 20px; background: #000; }
-        .btn-confirm { background: var(--verde); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
-        .btn-retake { background: var(--laranja); color: white; flex: 1; border: none; padding: 15px; border-radius: 8px; font-weight: bold; }
-        .status-gps { font-size: 12px; color: #666; text-align: center; margin-top: 10px; }
-    </style>
-</head>
-<body>
+function processPhoto(input) {
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    const MAX = 1920;
+    let w = img.naturalWidth, h = img.naturalHeight;
+    if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+    if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
 
-<header>CONSERVA - GESTÃO DE LDs</header>
+    _getExifOrientation(file, orientation => {
+      const canvas = document.createElement('canvas');
+      // para orientações rotacionadas 90/270 troca largura/altura
+      if (orientation >= 5 && orientation <= 8) {
+        canvas.width = h; canvas.height = w;
+      } else {
+        canvas.width = w; canvas.height = h;
+      }
+      const ctx = canvas.getContext('2d');
+      _applyExifRotation(ctx, orientation, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(blob => {
+        currentPhoto = blob;
+        document.getElementById('preview-img').src = URL.createObjectURL(blob);
+        document.getElementById('preview-container').style.display = 'flex';
+      }, 'image/jpeg', 0.88);
+    });
+  };
+  img.src = url;
+}
 
-<div class="container">
-    <div class="card">
-        <label>Linha de Distribuição (LD):</label>
-        <select id="select-projeto" onchange="salvarSelecao()">
-            </select>
-        <button class="btn-del" onclick="removerProjeto()">Remover LD da lista</button>
-        <div class="row" style="margin-top:10px;">
-            <input type="text" id="novo-projeto" placeholder="Novo nome...">
-            <button class="btn-add" style="max-width: 60px;" onclick="adicionarProjeto()">ADD</button>
-        </div>
-    </div>
-
-    <div class="card" style="display: flex; justify-content: space-between; align-items: center; border-left: 5px solid var(--verde);">
-        <label style="margin:0;">PRÓXIMA PILHA:</label>
-        <span id="display-id" style="font-size: 32px; font-weight: bold; color: var(--verde);">--</span>
-    </div>
-
-    <div class="card">
-        <label>Comprimento da Lenha (Metros):</label>
-        <select id="select-profundidade" onchange="toggleManualProfundidade()">
-            <option value="1.0">1.0 Metro</option>
-            <option value="2.0">2.0 Metros</option>
-            <option value="3.0">3.0 Metros</option>
-            <option value="manual">Outro valor (digitar)...</option>
-        </select>
-        <div id="manual-input-div">
-            <label style="color: var(--laranja);">Digite o valor exato:</label>
-            <input type="number" id="manual-prof-input" step="0.01" placeholder="Ex: 1.15">
-        </div>
-    </div>
-
-    <div class="status-gps" id="gps-status">GPS: Sincronizando...</div>
-
-    <button class="btn-capture" onclick="document.getElementById('camera').click()">CAPTURAR FOTO</button>
-    <input type="file" id="camera" accept="image/*" capture="camera" style="display: none;" onchange="processPhoto(this)">
-
-    <button class="btn-export" onclick="exportZip()">BAIXAR LOTE ZIP</button>
-    <button class="btn-reset" onclick="resetSistema()">ZERAR SISTEMA (NOVO PROJETO)</button>
-</div>
-
-<div id="preview-container">
-    <img id="preview-img">
-    <div class="preview-btns">
-        <button class="btn-retake" onclick="resetPreview()">REFAZER</button>
-        <button class="btn-confirm" onclick="saveData()">CONFIRMAR E SALVAR</button>
-    </div>
-</div>
-
-<script>
-    let db, currentPhoto = null, lastCoords = {lat:0, lon:0}, nextID = 1;
-    const projetosIniciais = [
-        "LD 138 kV Brumado II - Livramento de Brumado",
-        "LD 138 kV Pratudão I - Fazenda Sinimbu",
-        "LD 138 kV Paratinga - Boquira",
-        "LD 138 kV Ipiaú - Jequié II"
-    ];
-
-    let listaProjetos = JSON.parse(localStorage.getItem('projetos_conserva')) || projetosIniciais;
-
-    window.onload = () => { carregarLista(); initDB(); };
-
-    function carregarLista() {
-        const select = document.getElementById('select-projeto');
-        const ultimo = localStorage.getItem('ultimo_selecionado');
-        select.innerHTML = "";
-        listaProjetos.forEach(p => {
-            let opt = document.createElement('option');
-            opt.value = p; opt.innerText = p;
-            if(p === ultimo) opt.selected = true;
-            select.appendChild(opt);
-        });
-    }
-
-    function adicionarProjeto() {
-        const input = document.getElementById('novo-projeto');
-        const nome = input.value.trim();
-        if(nome && !listaProjetos.includes(nome)) {
-            listaProjetos.push(nome);
-            localStorage.setItem('projetos_conserva', JSON.stringify(listaProjetos));
-            localStorage.setItem('ultimo_selecionado', nome);
-            input.value = ""; carregarLista();
+function _getExifOrientation(file, callback) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const view = new DataView(e.target.result);
+    if (view.getUint16(0, false) !== 0xFFD8) return callback(1);
+    let offset = 2;
+    while (offset < view.byteLength) {
+      const marker = view.getUint16(offset, false);
+      offset += 2;
+      if (marker === 0xFFE1) {
+        if (view.getUint32(offset += 2, false) !== 0x45786966) return callback(1);
+        const little = view.getUint16(offset += 6, false) === 0x4949;
+        offset += view.getUint32(offset + 4, little);
+        const tags = view.getUint16(offset, little);
+        for (let i = 0; i < tags; i++) {
+          if (view.getUint16(offset + (i * 12) + 2, little) === 0x0112)
+            return callback(view.getUint16(offset + (i * 12) + 8, little));
         }
+      } else if ((marker & 0xFF00) !== 0xFF00) break;
+      else offset += view.getUint16(offset, false);
     }
+    callback(1);
+  };
+  reader.readAsArrayBuffer(file.slice(0, 64 * 1024));
+}
 
-    function removerProjeto() {
-        const select = document.getElementById('select-projeto');
-        if(confirm(`Remover "${select.value}"?`)) {
-            listaProjetos = listaProjetos.filter(p => p !== select.value);
-            localStorage.setItem('projetos_conserva', JSON.stringify(listaProjetos));
-            carregarLista();
-        }
-    }
-
-    function salvarSelecao() { localStorage.setItem('ultimo_selecionado', document.getElementById('select-projeto').value); }
-
-    function toggleManualProfundidade() {
-        const select = document.getElementById('select-profundidade');
-        const div = document.getElementById('manual-input-div');
-        div.style.display = (select.value === 'manual') ? 'block' : 'none';
-    }
-
-    function initDB() {
-        const req = indexedDB.open("ConservaDB", 1);
-        req.onupgradeneeded = e => e.target.result.createObjectStore("coletas", {keyPath: "id"});
-        req.onsuccess = e => { db = e.target.result; updatePilhaID(); };
-    }
-
-    function resetSistema() {
-        if (confirm("⚠️ Isso apagará as fotos e reiniciará o ID em 1. Confirma?") && confirm("🛑 Já baixou o ZIP? Se não, os dados serão perdidos.")) {
-            const tx = db.transaction("coletas", "readwrite");
-            tx.objectStore("coletas").clear().onsuccess = () => { updatePilhaID(); alert("Zerrado!"); };
-        }
-    }
-
-    navigator.geolocation.watchPosition(p => {
-        lastCoords = {lat: p.coords.latitude, lon: p.coords.longitude};
-        document.getElementById('gps-status').innerText = `GPS: SINAL OK`;
-        document.getElementById('gps-status').style.color = "var(--verde)";
-    }, null, {enableHighAccuracy: true});
-
-    function processPhoto(input) {
-        if (input.files && input.files[0]) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const img = new Image();
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    const MAX = 1280;
-                    let w = img.width, h = img.height;
-                    if (w > MAX) { h *= MAX/w; w = MAX; }
-                    canvas.width = w; canvas.height = h;
-                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                    canvas.toBlob(blob => {
-                        currentPhoto = blob;
-                        document.getElementById('preview-img').src = URL.createObjectURL(blob);
-                        document.getElementById('preview-container').style.display = 'flex';
-                    }, 'image/jpeg', 0.7);
-                };
-                img.src = e.target.result;
-            };
-            reader.readAsDataURL(input.files[0]);
-        }
-    }
-
-    function resetPreview() { document.getElementById('preview-container').style.display = 'none'; currentPhoto = null; }
-
-    function saveData() {
-        // Lógica para pegar o valor correto da profundidade
-        const select = document.getElementById('select-profundidade');
-        let valorProfundidade = select.value;
-        if (valorProfundidade === 'manual') {
-            valorProfundidade = document.getElementById('manual-prof-input').value.replace(',', '.');
-            if (!valorProfundidade || valorProfundidade <= 0) {
-                alert("Por favor, digite um valor válido para a profundidade.");
-                return;
-            }
-        }
-
-        const registro = {
-            id: nextID,
-            Projeto: document.getElementById('select-projeto').value,
-            Lat: lastCoords.lat, Lon: lastCoords.lon,
-            Data: new Date().toLocaleDateString('pt-BR'), Hora: new Date().toLocaleTimeString('pt-BR'),
-            Profundidade: valorProfundidade, foto: currentPhoto
-        };
-        const tx = db.transaction("coletas", "readwrite");
-        tx.objectStore("coletas").add(registro).onsuccess = () => {
-            resetPreview(); updatePilhaID();
-        };
-    }
-
-    function updatePilhaID() {
-        db.transaction("coletas", "readonly").objectStore("coletas").getAll().onsuccess = e => {
-            const maxID = e.target.result.reduce((max, c) => Math.max(max, c.id), 0);
-            nextID = maxID + 1;
-            document.getElementById('display-id').innerText = nextID;
-        };
-    }
-
-    async function exportZip() {
-        const zip = new JSZip();
-        db.transaction("coletas", "readonly").objectStore("coletas").getAll().onsuccess = async e => {
-            const items = e.target.result;
-            if (items.length === 0) return alert("Banco vazio.");
-            let csv = "ID_Pilha,Projeto,Lat,Lon,Data,Hora,Profundidade\n";
-            items.forEach(i => {
-                csv += `${i.id},"${i.Projeto}",${i.Lat},${i.Lon},${i.Data},${i.Hora},${i.Profundidade}\n`;
-                zip.file(`Pilha_${i.id}.jpg`, i.foto);
-            });
-            zip.file("dados_campo.csv", csv);
-            const blob = await zip.generateAsync({type:"blob"});
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = `Lote_${document.getElementById('select-projeto').value.replace(/[^a-z0-9]/gi, '_')}.zip`;
-            a.click();
-        };
-    }
-</script>
-</body>
-</html>
+function _applyExifRotation(ctx, o, w, h) {
+  const t = {
+    2: () => { ctx.transform(-1, 0, 0, 1, w, 0); },
+    3: () => { ctx.transform(-1, 0, 0, -1, w, h); },
+    4: () => { ctx.transform(1, 0, 0, -1, 0, h); },
+    5: () => { ctx.transform(0, 1, 1, 0, 0, 0); },
+    6: () => { ctx.transform(0, 1, -1, 0, h, 0); },
+    7: () => { ctx.transform(0, -1, -1, 0, h, w); },
+    8: () => { ctx.transform(0, -1, 1, 0, 0, w); },
+  };
+  if (t[o]) t[o]();
+}
