@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tabocas - Cubagem Digital</title>
+    <title>Cubic - Cubagem Digital</title>
     <link rel="manifest" href="manifest.json">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
@@ -45,7 +45,7 @@
     </style>
 </head>
 <body>
-<header>TABOCAS - GESTÃO DE LTs</header>
+<header>CUBIC - GESTÃO DE LTs</header>
 <div class="container">
 
     <!-- Projeto -->
@@ -148,7 +148,7 @@
     const CALIB_ALVO_PADRAO = 50;
 
     const projetosIniciais = [];
-    let listaProjetos = JSON.parse(localStorage.getItem('projetos_tabocas')) || projetosIniciais;
+    let listaProjetos = JSON.parse(localStorage.getItem('projetos_cubic')) || projetosIniciais;
 
     window.onload = () => { carregarLista(); initDB(); atualizarUiCalibracao(); };
 
@@ -169,7 +169,7 @@
         const nome = input.value.trim();
         if(nome && !listaProjetos.includes(nome)) {
             listaProjetos.push(nome);
-            localStorage.setItem('projetos_tabocas', JSON.stringify(listaProjetos));
+            localStorage.setItem('projetos_cubic', JSON.stringify(listaProjetos));
             localStorage.setItem('ultimo_selecionado', nome);
             input.value = ""; carregarLista();
         }
@@ -178,7 +178,7 @@
         const select = document.getElementById('select-projeto');
         if(confirm(`Remover "${select.value}"?`)) {
             listaProjetos = listaProjetos.filter(p => p !== select.value);
-            localStorage.setItem('projetos_tabocas', JSON.stringify(listaProjetos));
+            localStorage.setItem('projetos_cubic', JSON.stringify(listaProjetos));
             carregarLista();
         }
     }
@@ -190,7 +190,7 @@
 
     // ── IndexedDB ──────────────────────────────────────────────────────────────
     function initDB() {
-        const req = indexedDB.open("TabocasDB", 1);
+        const req = indexedDB.open("CubicDB", 1);
         req.onupgradeneeded = e => e.target.result.createObjectStore("coletas", {keyPath: "id"});
         req.onsuccess = e => { db = e.target.result; updatePilhaID(); };
     }
