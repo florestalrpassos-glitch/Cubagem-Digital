@@ -147,12 +147,7 @@
 
     const CALIB_ALVO_PADRAO = 50;
 
-    const projetosIniciais = [
-        "LD 138 kV Brumado II - Livramento de Brumado",
-        "LD 138 kV Pratudão I - Fazenda Sinimbu",
-        "LD 138 kV Paratinga - Boquira",
-        "LD 138 kV Ipiaú - Jequié II"
-    ];
+    const projetosIniciais = [];
     let listaProjetos = JSON.parse(localStorage.getItem('projetos_tabocas')) || projetosIniciais;
 
     window.onload = () => { carregarLista(); initDB(); atualizarUiCalibracao(); };
@@ -207,7 +202,7 @@
     }
 
     // ── Calibração ─────────────────────────────────────────────────────────────
-    function calibEstado()    { return localStorage.getItem('calib_estado') || 'inativo'; }     // inativo|ativo|concluido
+    function calibEstado()    { return localStorage.getItem('calib_estado') || 'inativo'; }
     function calibContagem()  { return parseInt(localStorage.getItem('calib_contagem') || '0'); }
     function calibAlvo()      { return parseInt(localStorage.getItem('calib_alvo') || CALIB_ALVO_PADRAO); }
 
@@ -250,22 +245,19 @@
         const alvo    = calibAlvo();
         const conta   = calibContagem();
 
-        // Painel calibração
-        document.getElementById('calib-inativo').style.display  = estado === 'inativo'   ? 'block' : 'none';
-        document.getElementById('calib-ativo').style.display    = estado === 'ativo'     ? 'block' : 'none';
+        document.getElementById('calib-inativo').style.display   = estado === 'inativo'   ? 'block' : 'none';
+        document.getElementById('calib-ativo').style.display     = estado === 'ativo'     ? 'block' : 'none';
         document.getElementById('calib-concluido').style.display = estado === 'concluido' ? 'block' : 'none';
 
         const card = document.getElementById('card-calibracao');
-        card.classList.toggle('ativa',    estado === 'ativo');
+        card.classList.toggle('ativa',     estado === 'ativo');
         card.classList.toggle('concluida', estado === 'concluido');
 
-        // Progresso
         if (estado === 'ativo') {
             document.getElementById('calib-progresso-texto').innerText = `${conta} / ${alvo}`;
             document.getElementById('calib-barra').style.width = `${Math.min(100, (conta / alvo) * 100)}%`;
         }
 
-        // Campos trena: visíveis só se calibração ativa
         const cardTrena = document.getElementById('card-trena');
         cardTrena.classList.toggle('visivel', estado === 'ativo');
     }
@@ -309,7 +301,6 @@
 
     // ── Foto ───────────────────────────────────────────────────────────────────
     function solicitarFoto() {
-        // Em modo calibração, valida campos trena ANTES de abrir a câmera
         if (calibEstado() === 'ativo') {
             const largura = parseFloat(document.getElementById('input-largura').value.replace(',', '.'));
             const altura  = parseFloat(document.getElementById('input-altura').value.replace(',', '.'));
@@ -364,7 +355,6 @@
     function resetPreview() {
         document.getElementById('preview-container').style.display = 'none';
         currentPhoto = null;
-        // Reseta o input de arquivo para permitir re-captura do mesmo arquivo
         document.getElementById('camera').value = '';
     }
 
@@ -375,7 +365,6 @@
             return;
         }
 
-        // Profundidade
         const select = document.getElementById('select-profundidade');
         let valorProf = select.value;
         if (valorProf === 'manual') {
@@ -386,7 +375,6 @@
             }
         }
 
-        // Medidas da trena — só em modo calibração (já validadas antes da foto)
         let largura = 0, altura = 0;
         if (calibEstado() === 'ativo') {
             largura = parseFloat(document.getElementById('input-largura').value.replace(',', '.')) || 0;
@@ -412,7 +400,6 @@
 
         const tx = db.transaction("coletas", "readwrite");
         tx.objectStore("coletas").add(registro).onsuccess = () => {
-            // Atualiza contagem de calibração
             if (calibEstado() === 'ativo') {
                 incrementarCalibracao();
                 document.getElementById('input-largura').value = '';
